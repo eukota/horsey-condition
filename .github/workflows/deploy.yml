@@ -14,20 +14,14 @@ jobs:
     - name: 🚚 Get latest code
       uses: actions/checkout@v3
 
-    - name: 📂 Sync files
-      uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+    - name: 📂 SFTP Deploy
+      uses: wlixcc/SFTP-Deploy-action@v1.2.4
       with:
-        server: ${{ secrets.FTP_SERVER }}
         username: ${{ secrets.FTP_USERNAME }}
+        server: ${{ secrets.FTP_SERVER }}
         password: ${{ secrets.FTP_PASSWORD }}
-        server-dir: horsey/ # TARGET DIRECTORY ON DREAMHOST
-        # Default local-dir is root (.), which includes index.html, levels.js etc.
-        exclude: |
-          **/.git*
-          **/.claude*
-          **/node_modules/**
-          **/brain/**
-          scores.json
-          Dockerfile
-          Makefile
-          package-lock.json
+        local_path: './'
+        remote_path: 'horsey/' # TARGET DIRECTORY ON DREAMHOST
+        # Note: Depending on your server setup, you might need the full path
+        # like: /home/your_user/your_domain.com/horsey/
+        args: '-o ConnectTimeout=10'
