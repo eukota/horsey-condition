@@ -14,13 +14,18 @@ jobs:
     - name: 🚚 Get latest code
       uses: actions/checkout@v3
 
+    - name: 🏗️ Prepare deployment files
+      run: |
+        mkdir deploy
+        cp index.html levels.js server.js package.json scores.json deploy/
+
     - name: 📂 SFTP Deploy
       uses: wlixcc/SFTP-Deploy-action@v1.2.4
       with:
         username: ${{ secrets.FTP_USERNAME }}
         server: ${{ secrets.FTP_SERVER }}
         password: ${{ secrets.FTP_PASSWORD }}
-        local_path: './'
+        local_path: './deploy'
         remote_path: 'horsey/' # TARGET DIRECTORY ON DREAMHOST
         # Note: Depending on your server setup, you might need the full path
         # like: /home/your_user/your_domain.com/horsey/
