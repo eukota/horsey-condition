@@ -139,6 +139,8 @@
     let tookSecretPath = false;
     let runScore = 0;
     let runTime = 0;
+    let joyOriginCanvas = null, joyCurrentCanvas = null; // touch joystick render state
+    let lbTab = 0; // leaderboard tab: 0=ALL, 1-7=level id
 
     // ── settings ──────────────────────────────────────────────
     const settings = {
@@ -149,7 +151,7 @@
       highQualityFX: true,
     };
     const SETTINGS_OPTS = [
-      { label: 'Level', key: 'levelIdx', type: 'cycle', options: ALL_LEVELS.map(l => l.name) },
+      { label: 'Level', key: 'levelIdx', type: 'cycle', options: ALL_LEVELS.slice(0, -1).map(l => l.name) },
       { label: 'Enemy Respawn', key: 'enemyRespawn', type: 'toggle' },
       { label: 'High Quality FX', key: 'highQualityFX', type: 'toggle' },
       { label: 'Rainbow Trail', key: 'rainbowTrail', type: 'toggle' },
@@ -169,10 +171,7 @@
     // ── server I/O ────────────────────────────────────────────
     async function fetchScores() {
       try {
-        let key;
-        if (settings.levelIdx === 0) key = getRunKey(false);
-        else if (settings.levelIdx === ALL_LEVELS.length - 1) key = getRunKey(true);
-        else key = `lvl:${ALL_LEVELS[settings.levelIdx].id}|er:${settings.enemyRespawn ? 1 : 0}`;
+        const key = lbTab === 0 ? 'run:all|er:0' : `lvl:${lbTab}|er:0`;
         const res = await fetch(`scores.php?key=${encodeURIComponent(key)}`);
         const data = await res.json();
         if (data && data.highScores && data.fastTimes) scores = data;
@@ -303,12 +302,15 @@
     window.addEventListener('keydown', e => {
       if (['Space', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
 
-      // Lobby: handle username entry
+      // Lobby: handle username entry + leaderboard tab navigation
       if (phase === 'lobby') {
         if (e.code === 'Enter' && username.trim().length > 0) {
           initPlay();
         } else if (e.code === 'Backspace') {
           username = username.slice(0, -1);
+        } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+          lbTab = (lbTab + (e.code === 'ArrowRight' ? 1 : -1) + 8) % 8;
+          fetchScores();
         } else if (e.key.length === 1 && username.length < 16) {
           username += e.key.toUpperCase();
         }
@@ -354,7 +356,7 @@
         timerActive = true;
       }
 
-      if (e.code === 'KeyR' && (phase === 'win' || phase === 'dead')) phase = 'lobby';
+      if (e.code === 'KeyR' && (phase === 'win' || phase === 'dead')) { phase = 'lobby'; fetchScores(); }
       if ((e.code === 'Enter' || e.code === 'KeyR') && phase === 'nextlevel') {
         playingLevelIdx++;
         startLevel(playingLevelIdx);
@@ -366,6 +368,18 @@
     });
 
     window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    canvas.addEventListener('click', e => {
+      if (phase !== 'lobby') return;
+      const rect = canvas.getBoundingClientRect();
+      const cx = (e.clientX - rect.left) * (800 / rect.width);
+      const cy = (e.clientY - rect.top)  * (450 / rect.height);
+      const tabX0 = W / 2 - 322, tabTotalW = 644, tabY = 96, tabH = 24;
+      if (cy >= tabY && cy <= tabY + tabH && cx >= tabX0 && cx <= tabX0 + tabTotalW) {
+        lbTab = Math.min(7, Math.floor((cx - tabX0) / (tabTotalW / 8)));
+        fetchScores();
+      }
+    });
 
     // ── touch events ──────────────────────────────────────────
     function setupTouch() {
@@ -417,10 +431,15 @@
         }
         if (phase === 'win' || phase === 'dead') {
           phase = 'lobby';
+          fetchScores();
           return;
         }
         if (phase === 'lobby') {
-          if (cy > 330 && cy < 390) {
+          const tabX0 = W / 2 - 322, tabTotalW = 644, tabY = 96, tabH = 24;
+          if (cy >= tabY && cy <= tabY + tabH && cx >= tabX0 && cx <= tabX0 + tabTotalW) {
+            lbTab = Math.min(7, Math.floor((cx - tabX0) / (tabTotalW / 8)));
+            fetchScores();
+          } else if (cy > 330 && cy < 390) {
             mobileInput.focus();
             mobileInput.value = username;
           }
@@ -447,6 +466,8 @@
         }
         if (phase === 'play') {
           joyOrigin = { x: touch.clientX, y: touch.clientY };
+          joyOriginCanvas = { x: cx, y: cy };
+          joyCurrentCanvas = { x: cx, y: cy };
           if (!timerActive) { startTime = Date.now(); timerActive = true; }
         }
       }, { passive: false });
@@ -458,6 +479,11 @@
         const dx = touch.clientX - joyOrigin.x;
         const dy = touch.clientY - joyOrigin.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
+        const rect2 = canvas.getBoundingClientRect();
+        joyCurrentCanvas = {
+          x: (touch.clientX - rect2.left) * (800 / rect2.width),
+          y: (touch.clientY - rect2.top)  * (450 / rect2.height),
+        };
         if (dist < DEAD_ZONE) {
           keys['ArrowLeft'] = false; keys['ArrowRight'] = false; keys['Space'] = false;
           return;
@@ -472,6 +498,7 @@
       const stopTouch = e => {
         e.preventDefault();
         joyOrigin = null;
+        joyOriginCanvas = null; joyCurrentCanvas = null;
         keys['ArrowLeft'] = false; keys['ArrowRight'] = false; keys['Space'] = false;
       };
       canvas.addEventListener('touchend', stopTouch, { passive: false });
@@ -487,6 +514,7 @@
       btnRestart.addEventListener('touchstart', e => {
         e.preventDefault();
         phase = 'lobby';
+        fetchScores();
       });
       btnSettings.addEventListener('touchstart', e => {
         e.preventDefault();
@@ -670,12 +698,28 @@
         ctx.fillText('HORSEY CONDITION', W / 2, 76);
       });
 
+      // Leaderboard tabs
+      const tabLabels = ['ALL', '1', '2', '3', '4', '5', '6', '7'];
+      const tabX0 = W / 2 - 322, tabTotalW = 644, tabW = tabTotalW / tabLabels.length;
+      const tabY = 96, tabH = 24;
+      tabLabels.forEach((label, i) => {
+        const tx = tabX0 + i * tabW;
+        const active = lbTab === i;
+        ctx.fillStyle = active ? 'rgba(0,255,255,0.15)' : 'rgba(0,0,0,0.5)';
+        ctx.fillRect(tx + 1, tabY, tabW - 2, tabH);
+        ctx.strokeStyle = active ? '#00FFFF' : 'rgba(0,255,255,0.2)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tx + 1, tabY, tabW - 2, tabH);
+        ctx.font = 'bold 11px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = active ? '#00FFFF' : 'rgba(200,200,255,0.45)';
+        ctx.fillText(label, tx + tabW / 2, tabY + 16);
+      });
+
       // Leaderboard panels
-      const pw = 310, ph = 220, py = 98;
-      const isRunBoard = settings.levelIdx === 0;
-      const isSecretBoard = settings.levelIdx === ALL_LEVELS.length - 1;
-      const lbTitle1 = isRunBoard ? 'FULL RUN · SCORES' : isSecretBoard ? 'SECRET RUN · SCORES' : 'HIGH SCORES';
-      const lbTitle2 = isRunBoard ? 'FULL RUN · FASTEST' : isSecretBoard ? 'SECRET RUN · FASTEST' : 'FASTEST TIMES';
+      const pw = 310, ph = 192, py = 126;
+      const lbTitle1 = lbTab === 0 ? 'FULL RUN · SCORES' : `LEVEL ${lbTab} · SCORES`;
+      const lbTitle2 = lbTab === 0 ? 'FULL RUN · FASTEST' : `LEVEL ${lbTab} · FASTEST`;
       drawPanel(W / 2 - pw - 12, py, pw, ph, '#FF2D78', lbTitle1,
         scores.highScores, e => `${e.score} (${formatTime(e.time).split(':')[1]})`);
       drawPanel(W / 2 + 12, py, pw, ph, '#00FF99', lbTitle2,
@@ -712,7 +756,7 @@
 
       ctx.font = '11px "Courier New", monospace';
       ctx.fillStyle = 'rgba(180,180,255,0.28)';
-      ctx.fillText('A D / ← →  move   ·   W / ↑ / SPACE  jump   ·   R  restart   ·  TAB/ESC settings', W / 2, H - 14);
+      ctx.fillText('← →  browse scores   ·   ENTER  start   ·   TAB/ESC  settings', W / 2, H - 14);
       ctx.textAlign = 'left';
     }
 
@@ -941,6 +985,33 @@
         ctx.fillStyle = 'rgba(200,200,255,0.35)';
         ctx.font = '12px "Courier New", monospace';
         ctx.fillText('A D / ← →  move      W / ↑ / SPACE  jump      R  restart', 20, H - 14);
+      }
+
+      // ── touch joystick overlay ─────────────────────────────
+      if (joyOriginCanvas && joyCurrentCanvas) {
+        const JR = 50, KR = 22;
+        let kx = joyCurrentCanvas.x, ky = joyCurrentCanvas.y;
+        const jdx = kx - joyOriginCanvas.x, jdy = ky - joyOriginCanvas.y;
+        const jd = Math.sqrt(jdx * jdx + jdy * jdy);
+        if (jd > JR) { kx = joyOriginCanvas.x + jdx / jd * JR; ky = joyOriginCanvas.y + jdy / jd * JR; }
+        ctx.save();
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath();
+        ctx.arc(joyOriginCanvas.x, joyOriginCanvas.y, JR, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,255,255,0.08)';
+        ctx.fill();
+        ctx.strokeStyle = '#00FFFF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.globalAlpha = 0.65;
+        ctx.beginPath();
+        ctx.arc(kx, ky, KR, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,255,255,0.3)';
+        ctx.fill();
+        ctx.strokeStyle = '#00FFFF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
       }
 
       // ── overlays ──────────────────────────────────────────
