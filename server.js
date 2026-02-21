@@ -26,14 +26,14 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/javascript' });
     res.end(fs.readFileSync(LEVELS_FILE));
 
-  } else if (req.method === 'GET' && urlPath === '/scores') {
+  } else if (req.method === 'GET' && (urlPath === '/scores' || urlPath === '/scores.php')) {
     const params = new URLSearchParams(queryStr);
     const key = params.get('key') || 'default';
     const data = readScores();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data[key] || { highScores: [], fastTimes: [] }));
 
-  } else if (req.method === 'POST' && urlPath === '/scores') {
+  } else if (req.method === 'POST' && (urlPath === '/scores' || urlPath === '/scores.php')) {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {

@@ -226,14 +226,14 @@
     // ── server I/O ────────────────────────────────────────────
     async function fetchScores() {
       try {
-        const res = await fetch(`scores?key=${getSettingsKey()}`);
+        const res = await fetch(`scores.php?key=${encodeURIComponent(getSettingsKey())}`);
         scores = await res.json();
       } catch { /* no server (opened as file) */ }
     }
 
     async function submitScore(finished = true) {
       try {
-        const res = await fetch('scores', {
+        const res = await fetch('scores.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
