@@ -105,6 +105,8 @@
     canvas.width = 800;
     canvas.height = 450;
 
+    const VERSION = '1.0.0';
+
     // ── constants ─────────────────────────────────────────────
     const GRAVITY = 0.28;
     const JUMP_VY = -9.2;
@@ -135,12 +137,11 @@
     let finalTime = 0;
     let hasPlayed = false;
     let playingLevelIdx = 0;
-    let isFullRun = false;
     let tookSecretPath = false;
     let runScore = 0;
     let runTime = 0;
+    let coinsCollected = 0, enemiesStomped = 0, timePts = 0;
     let joyOriginCanvas = null, joyCurrentCanvas = null; // touch joystick render state
-    let lbTab = 0; // leaderboard tab: 0=ALL, 1-7=level id
 
     // ── settings ──────────────────────────────────────────────
     const settings = {
@@ -150,57 +151,49 @@
       unicornHorn: true,
       highQualityFX: true,
     };
-    const SETTINGS_OPTS = [
-      { label: 'Level', key: 'levelIdx', type: 'cycle', options: ALL_LEVELS.slice(0, -1).map(l => l.name) },
+    const GAMEPLAY_OPTS = [
+      { label: 'Start Level', key: 'levelIdx', type: 'cycle', options: ALL_LEVELS.slice(0, -1).map(l => l.name) },
       { label: 'Enemy Respawn', key: 'enemyRespawn', type: 'toggle' },
+    ];
+    const VISUAL_OPTS = [
       { label: 'High Quality FX', key: 'highQualityFX', type: 'toggle' },
       { label: 'Rainbow Trail', key: 'rainbowTrail', type: 'toggle' },
       { label: 'Unicorn Horn', key: 'unicornHorn', type: 'toggle' },
     ];
+    const SETTINGS_OPTS = [...GAMEPLAY_OPTS, ...VISUAL_OPTS];
     let settingsCursor = 0;
     let settingsPrevPhase = 'lobby';
 
-    function getSettingsKey() {
-      return `lvl:${currentLevel.id}|er:${settings.enemyRespawn ? 1 : 0}`;
-    }
-
-    function getRunKey(secret) {
-      return `${secret ? 'run:secret' : 'run:all'}|er:${settings.enemyRespawn ? 1 : 0}`;
-    }
+    const SCORE_KEY = 'run';
 
     // ── server I/O ────────────────────────────────────────────
     async function fetchScores() {
       try {
-        const key = lbTab === 0 ? 'run:all|er:0' : `lvl:${lbTab}|er:0`;
-        const res = await fetch(`scores.php?key=${encodeURIComponent(key)}`);
+        const res = await fetch(`scores.php?key=${encodeURIComponent(SCORE_KEY)}`);
         const data = await res.json();
         if (data && data.highScores && data.fastTimes) scores = data;
       } catch { /* no server (opened as file) */ }
     }
 
-    async function submitScore(finished = true) {
+    async function submitRun(totalScore, totalTime, finished) {
+      if (settings.enemyRespawn) return; // enemy respawn disables leaderboard
       try {
         const res = await fetch('scores.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: username, score, time: finalTime, finished, settingsKey: getSettingsKey() }),
+          body: JSON.stringify({ name: username, score: totalScore, time: totalTime, finished, settingsKey: SCORE_KEY }),
         });
         const data = await res.json();
         if (data && data.highScores && data.fastTimes) scores = data;
       } catch { /* offline */ }
     }
 
-    async function submitRunScore(secret) {
-      try {
-        await fetch('scores.php', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: username, score: runScore, time: runTime, finished: true, settingsKey: getRunKey(secret) }),
-        });
-      } catch { /* offline */ }
+    // ── helpers ───────────────────────────────────────────────
+    function fmtPts(n) {
+      const r = Math.round(n * 100) / 100;
+      return r % 1 === 0 ? String(r) : r.toFixed(2);
     }
 
-    // ── helpers ───────────────────────────────────────────────
     function formatTime(ms) {
       const m = Math.floor(ms / 60000);
       const s = Math.floor((ms % 60000) / 1000);
@@ -227,7 +220,6 @@
     // ── init ──────────────────────────────────────────────────
     function initPlay() {
       playingLevelIdx = settings.levelIdx;
-      isFullRun = (settings.levelIdx === 0);
       tookSecretPath = false;
       runScore = 0;
       runTime = 0;
@@ -251,6 +243,9 @@
       cameraX = 0;
       cameraY = 0;
       score = 0;
+      coinsCollected = 0;
+      enemiesStomped = 0;
+      timePts = 0;
       phase = 'play';
       startTime = null;
       timerActive = false;
@@ -259,9 +254,10 @@
 
     function winLevel(secret = false) {
       finalTime = timerActive ? Date.now() - startTime : 0;
-      score += player.hp * 5;
-      if (isFullRun) { runScore += score; runTime += finalTime; }
-      submitScore(true);
+      timePts = Math.max(0, parseFloat((20 - finalTime / 1000).toFixed(2)));
+      score += player.hp * 5 + timePts;
+      runScore += score;
+      runTime += finalTime;
 
       const isL6 = playingLevelIdx === 5;
       const isL7 = playingLevelIdx === 6;
@@ -270,7 +266,7 @@
         tookSecretPath = true;
         phase = 'secretwin';
       } else if (isL6 || isL7) {
-        if (isFullRun) submitRunScore(tookSecretPath);
+        submitRun(runScore, runTime, true);
         phase = 'win';
       } else {
         phase = 'nextlevel';
@@ -281,7 +277,7 @@
       if (phase !== 'play') return;
       finalTime = timerActive ? Date.now() - startTime : 0;
       phase = 'dead';
-      submitScore(false);
+      submitRun(runScore + score, runTime + finalTime, false);
     }
 
     function hurtPlayer(enemy) {
@@ -302,16 +298,13 @@
     window.addEventListener('keydown', e => {
       if (['Space', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
 
-      // Lobby: handle username entry + leaderboard tab navigation
+      // Lobby: handle username entry
       if (phase === 'lobby') {
         if (e.code === 'Enter' && username.trim().length > 0) {
           initPlay();
         } else if (e.code === 'Backspace') {
           username = username.slice(0, -1);
-        } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-          lbTab = (lbTab + (e.code === 'ArrowRight' ? 1 : -1) + 8) % 8;
-          fetchScores();
-        } else if (e.key.length === 1 && username.length < 16) {
+        } else if (e.key.length === 1 && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code) && username.length < 16) {
           username += e.key.toUpperCase();
         }
         // Allow settings toggle in lobby
@@ -369,17 +362,7 @@
 
     window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-    canvas.addEventListener('click', e => {
-      if (phase !== 'lobby') return;
-      const rect = canvas.getBoundingClientRect();
-      const cx = (e.clientX - rect.left) * (800 / rect.width);
-      const cy = (e.clientY - rect.top)  * (450 / rect.height);
-      const tabX0 = W / 2 - 322, tabTotalW = 644, tabY = 96, tabH = 24;
-      if (cy >= tabY && cy <= tabY + tabH && cx >= tabX0 && cx <= tabX0 + tabTotalW) {
-        lbTab = Math.min(7, Math.floor((cx - tabX0) / (tabTotalW / 8)));
-        fetchScores();
-      }
-    });
+    canvas.addEventListener('click', e => { /* lobby click — no tab targets */ });
 
     // ── touch events ──────────────────────────────────────────
     function setupTouch() {
@@ -435,18 +418,14 @@
           return;
         }
         if (phase === 'lobby') {
-          const tabX0 = W / 2 - 322, tabTotalW = 644, tabY = 96, tabH = 24;
-          if (cy >= tabY && cy <= tabY + tabH && cx >= tabX0 && cx <= tabX0 + tabTotalW) {
-            lbTab = Math.min(7, Math.floor((cx - tabX0) / (tabTotalW / 8)));
-            fetchScores();
-          } else if (cy > 330 && cy < 390) {
+          if (cy > 330 && cy < 390) {
             mobileInput.focus();
             mobileInput.value = username;
           }
           return;
         }
         if (phase === 'settings') {
-          const menuW = 360, menuH = 260;
+          const menuW = 360, menuH = 320;
           const menuX = 400 - menuW / 2, menuY = 225 - menuH / 2;
           if (cx > menuX && cx < menuX + menuW) {
             SETTINGS_OPTS.forEach((opt, i) => {
@@ -482,7 +461,7 @@
         const rect2 = canvas.getBoundingClientRect();
         joyCurrentCanvas = {
           x: (touch.clientX - rect2.left) * (800 / rect2.width),
-          y: (touch.clientY - rect2.top)  * (450 / rect2.height),
+          y: (touch.clientY - rect2.top) * (450 / rect2.height),
         };
         if (dist < DEAD_ZONE) {
           keys['ArrowLeft'] = false; keys['ArrowRight'] = false; keys['Space'] = false;
@@ -491,8 +470,8 @@
         const nx = dx / dist;
         const ny = dy / dist;
         keys['ArrowRight'] = nx > 0.3;
-        keys['ArrowLeft']  = nx < -0.3;
-        keys['Space']      = ny < -0.3;
+        keys['ArrowLeft'] = nx < -0.3;
+        keys['Space'] = ny < -0.3;
       }, { passive: false });
 
       const stopTouch = e => {
@@ -572,6 +551,7 @@
           overlap(player.x, player.y, player.w, player.h, c.x - c.r, c.y - c.r, c.r * 2, c.r * 2)) {
           c.collected = true;
           score += 10;
+          coinsCollected++;
         }
       }
 
@@ -598,7 +578,8 @@
             e.dead = true;
             e.respawnIn = 60;
             player.vy = -6;
-            score += 5; // 5 pts per squish
+            score += 5;
+            enemiesStomped++;
           } else {
             hurtPlayer(e);
           }
@@ -609,13 +590,19 @@
       if (player.x + player.w > GOAL.x && player.y < GOAL.y + GOAL.poleH) {
         winLevel(false);
       }
+      if (currentLevel.secretGoal) {
+        const SG = currentLevel.secretGoal;
+        if (player.x + player.w > SG.x && player.y < SG.y + SG.poleH && overlap(player.x, player.y, player.w, player.h, SG.x, SG.y, 40, SG.poleH)) {
+          winLevel(true);
+        }
+      }
       if (player.y > 600) killPlayer();
 
       // Camera
       cameraX += (player.x - W * 0.3 - cameraX) * 0.12;
       cameraX = Math.max(0, cameraX);
       cameraY += (player.y - H * 0.5 - cameraY) * 0.12;
-      cameraY = Math.max(-200, cameraY); // don't scroll above world top
+      cameraY = Math.max(-3000, cameraY); // allow much taller levels
     }
 
     // ── background helpers ────────────────────────────────────
@@ -639,8 +626,79 @@
       ctx.fillRect(0, 0, W, H);
     }
 
+    // ── score breakdown ────────────────────────────────────────
+    function drawScoreBreakdown(cx, startY) {
+      const coinPts  = coinsCollected * 10;
+      const enemyPts = enemiesStomped * 5;
+      const hpPts    = player.hp * 5;
+      const lx = cx - 50;   // label right-align x
+      const fx = cx + 88;   // formula right-align x
+      const rx = cx + 145;  // value right-align x
+      const rowH = 20;
+
+      ctx.font = '13px "Courier New", monospace';
+      const rows = [
+        ['COINS',   `${coinsCollected} × 10 =`, coinPts,  false, String(coinPts)],
+        ['ENEMIES', `${enemiesStomped} × 5 =`,  enemyPts, false, String(enemyPts)],
+        ['HEALTH',  `${player.hp} × 5 =`,       hpPts,    false, String(hpPts)],
+      ];
+      if (timePts > 0) {
+        const elapsedSec = (finalTime / 1000).toFixed(2);
+        rows.push(['TIME BONUS', `20 - ${elapsedSec}s =`, timePts, true, timePts.toFixed(2)]);
+      }
+
+      rows.forEach(([label, formula, , gold, display], i) => {
+        const y = startY + i * rowH;
+        ctx.textAlign = 'right';
+        ctx.fillStyle = gold ? 'rgba(255,215,0,0.75)' : 'rgba(200,200,255,0.75)';
+        ctx.fillText(label, lx, y);
+        ctx.fillStyle = 'rgba(150,150,200,0.55)';
+        ctx.fillText(formula, fx, y);
+        ctx.fillStyle = gold ? '#FFD700' : '#00FFFF';
+        ctx.fillText(display, rx, y);
+      });
+
+      const divY = startY + rows.length * rowH + 6;
+      ctx.strokeStyle = 'rgba(100,100,200,0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(lx - 50, divY);
+      ctx.lineTo(rx, divY);
+      ctx.stroke();
+
+      const totalY = divY + 18;
+      ctx.font = 'bold 14px "Courier New", monospace';
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(200,200,255,0.85)';
+      ctx.fillText('LEVEL SCORE', lx, totalY);
+      glow('#00FFFF', 10, () => {
+        ctx.font = 'bold 14px "Courier New", monospace';
+        ctx.fillStyle = '#00FFFF';
+        ctx.textAlign = 'right';
+        ctx.fillText(fmtPts(score), rx, totalY);
+      });
+
+      let nextY = totalY + 24;
+      if (playingLevelIdx >= 1) {
+        ctx.font = '13px "Courier New", monospace';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(200,200,255,0.65)';
+        ctx.fillText('RUN TOTAL', lx, nextY);
+        glow('#FFD700', 8, () => {
+          ctx.font = '13px "Courier New", monospace';
+          ctx.fillStyle = '#FFD700';
+          ctx.textAlign = 'right';
+          ctx.fillText(fmtPts(runScore), rx, nextY);
+        });
+        nextY += 22;
+      }
+
+      ctx.textAlign = 'left';
+      return nextY;
+    }
+
     // ── leaderboard panel ─────────────────────────────────────
-    function drawPanel(x, y, w, h, color, title, entries, valueFn) {
+    function drawPanel(x, y, w, h, color, title, entries, valueFn, onlyFinished = false) {
       ctx.fillStyle = 'rgba(0,0,0,0.65)';
       ctx.fillRect(x, y, w, h);
       glow(color, 12, () => {
@@ -656,29 +714,22 @@
       ctx.fillStyle = color;
       ctx.fillText(title, x + w / 2, y + 19);
 
-      if (entries.length === 0) {
+      const finished = onlyFinished ? entries.filter(e => e.finished) : entries;
+      if (finished.length === 0) {
         ctx.font = '11px "Courier New", monospace';
         ctx.fillStyle = 'rgba(200,200,255,0.3)';
         ctx.fillText('— no records yet —', x + w / 2, y + 70);
       } else {
         ctx.font = '12px "Courier New", monospace';
-        const shown = entries.slice(0, 7);
-        shown.forEach((e, i) => {
+        finished.slice(0, 6).forEach((e, i) => {
           const ry = y + 44 + i * 26;
-          const dim = !e.finished;
-          ctx.fillStyle = i === 0 && !dim ? '#FFD700' : dim ? 'rgba(160,155,200,0.85)' : 'rgba(220,220,255,0.95)';
+          ctx.fillStyle = i === 0 ? '#FFD700' : 'rgba(220,220,255,0.95)';
           ctx.textAlign = 'left';
           ctx.fillText(`${i + 1}.`, x + 12, ry);
           ctx.fillText(e.name.substring(0, 11), x + 34, ry);
           ctx.textAlign = 'right';
-          ctx.fillText(valueFn(e) + (dim ? '*' : ''), x + w - 12, ry);
+          ctx.fillText(valueFn(e), x + w - 12, ry);
         });
-        if (shown.some(e => !e.finished)) {
-          ctx.textAlign = 'left';
-          ctx.font = '10px "Courier New", monospace';
-          ctx.fillStyle = 'rgba(160,155,200,0.75)';
-          ctx.fillText('*unfinished', x + 10, y + h - 7);
-        }
       }
       ctx.textAlign = 'left';
     }
@@ -698,32 +749,12 @@
         ctx.fillText('HORSEY CONDITION', W / 2, 76);
       });
 
-      // Leaderboard tabs
-      const tabLabels = ['ALL', '1', '2', '3', '4', '5', '6', '7'];
-      const tabX0 = W / 2 - 322, tabTotalW = 644, tabW = tabTotalW / tabLabels.length;
-      const tabY = 96, tabH = 24;
-      tabLabels.forEach((label, i) => {
-        const tx = tabX0 + i * tabW;
-        const active = lbTab === i;
-        ctx.fillStyle = active ? 'rgba(0,255,255,0.15)' : 'rgba(0,0,0,0.5)';
-        ctx.fillRect(tx + 1, tabY, tabW - 2, tabH);
-        ctx.strokeStyle = active ? '#00FFFF' : 'rgba(0,255,255,0.2)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(tx + 1, tabY, tabW - 2, tabH);
-        ctx.font = 'bold 11px "Courier New", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = active ? '#00FFFF' : 'rgba(200,200,255,0.45)';
-        ctx.fillText(label, tx + tabW / 2, tabY + 16);
-      });
-
       // Leaderboard panels
-      const pw = 310, ph = 192, py = 126;
-      const lbTitle1 = lbTab === 0 ? 'FULL RUN · SCORES' : `LEVEL ${lbTab} · SCORES`;
-      const lbTitle2 = lbTab === 0 ? 'FULL RUN · FASTEST' : `LEVEL ${lbTab} · FASTEST`;
-      drawPanel(W / 2 - pw - 12, py, pw, ph, '#FF2D78', lbTitle1,
-        scores.highScores, e => `${e.score} (${formatTime(e.time).split(':')[1]})`);
-      drawPanel(W / 2 + 12, py, pw, ph, '#00FF99', lbTitle2,
-        scores.fastTimes, e => `${formatTime(e.time)} (${e.score}pts)`);
+      const pw = 320, ph = 208, py = 96;
+      drawPanel(W / 2 - pw - 12, py, pw, ph, '#FF2D78', 'HIGH SCORES',
+        scores.highScores, e => `${fmtPts(e.score)}pts`);
+      drawPanel(W / 2 + 12, py, pw, ph, '#00FF99', 'FASTEST COMPLETE',
+        scores.fastTimes, e => formatTime(e.time), true);
 
       // Username input
       const bx = W / 2 - 155, by = 340, bw = 310, bh = 38;
@@ -756,7 +787,12 @@
 
       ctx.font = '11px "Courier New", monospace';
       ctx.fillStyle = 'rgba(180,180,255,0.28)';
-      ctx.fillText('← →  browse scores   ·   ENTER  start   ·   TAB/ESC  settings', W / 2, H - 14);
+      ctx.fillText('ENTER  start   ·   TAB / ESC  settings', W / 2, H - 14);
+
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(180,180,255,0.2)';
+      ctx.textAlign = 'right';
+      ctx.fillText(`v${VERSION}`, W - 8, H - 5);
       ctx.textAlign = 'left';
     }
 
@@ -782,20 +818,25 @@
         });
       }
 
-      // Goal Rainbow
-      ctx.save();
-      ctx.translate(GOAL.x, GOAL.y + GOAL.poleH);
-      RAINBOW.forEach((col, i) => {
-        const r = 45 + (RAINBOW.length - i) * 6;
-        glow(col, 20, () => {
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 7;
-          ctx.beginPath();
-          ctx.arc(0, 0, r, Math.PI, 0);
-          ctx.stroke();
+      // Goal Rainbows
+      const drawRainbow = (g) => {
+        ctx.save();
+        ctx.translate(g.x, g.y + g.poleH);
+        RAINBOW.forEach((col, i) => {
+          const r = 45 + (RAINBOW.length - i) * 6;
+          glow(col, 20, () => {
+            ctx.strokeStyle = col;
+            ctx.lineWidth = 7;
+            ctx.beginPath();
+            ctx.arc(0, 0, r, Math.PI, 0);
+            ctx.stroke();
+          });
         });
-      });
-      ctx.restore();
+        ctx.restore();
+      };
+
+      drawRainbow(GOAL);
+      if (currentLevel.secretGoal) drawRainbow(currentLevel.secretGoal);
 
       // Enemies
       for (const e of enemies) {
@@ -1024,33 +1065,45 @@
           glow('#FFD700', 40, () => {
             ctx.font = 'bold 52px "Courier New", monospace';
             ctx.fillStyle = '#FFD700';
-            ctx.fillText('YOU WIN!', W / 2, H / 2 - 52);
+            ctx.fillText('YOU WIN!', W / 2, 108);
           });
-          glow('#00FFFF', 14, () => {
-            ctx.font = 'bold 18px "Courier New", monospace';
-            ctx.fillStyle = '#00FFFF';
-            ctx.fillText(`SCORE  ${score}`, W / 2, H / 2 - 8);
-          });
+          const bdBot = drawScoreBreakdown(W / 2, 160);
           glow('#FFD700', 12, () => {
-            ctx.font = 'bold 18px "Courier New", monospace';
+            ctx.font = 'bold 16px "Courier New", monospace';
             ctx.fillStyle = '#FFD700';
-            ctx.fillText(`TIME  ${formatTime(finalTime)}`, W / 2, H / 2 + 24);
+            ctx.textAlign = 'center';
+            ctx.fillText(`TIME  ${formatTime(finalTime)}`, W / 2, bdBot + 16);
           });
           glow('#FF2D78', 8, () => {
             ctx.font = '13px "Courier New", monospace';
             ctx.fillStyle = '#FF2D78';
-            ctx.fillText('PRESS  R  TO PLAY AGAIN', W / 2, H / 2 + 62);
+            ctx.textAlign = 'center';
+            ctx.fillText('PRESS  R  TO PLAY AGAIN', W / 2, bdBot + 48);
           });
         } else {
           glow('#FF2D78', 40, () => {
             ctx.font = 'bold 52px "Courier New", monospace';
             ctx.fillStyle = '#FF2D78';
-            ctx.fillText('GAME OVER', W / 2, H / 2 - 30);
+            ctx.fillText('GAME OVER', W / 2, H / 2 - 60);
           });
-          glow('#00FFFF', 8, () => {
-            ctx.font = '13px "Courier New", monospace';
+          const totalDead = runScore + score;
+          glow('#FF2D78', 10, () => {
+            ctx.font = 'bold 14px "Courier New", monospace';
+            ctx.fillStyle = 'rgba(200,200,255,0.75)';
+            ctx.textAlign = 'center';
+            ctx.fillText(currentLevel.name.toUpperCase(), W / 2, H / 2 - 16);
+          });
+          glow('#00FFFF', 12, () => {
+            ctx.font = 'bold 20px "Courier New", monospace';
             ctx.fillStyle = '#00FFFF';
-            ctx.fillText('PRESS  R  TO RETRY', W / 2, H / 2 + 20);
+            ctx.textAlign = 'center';
+            ctx.fillText(`RUN SCORE  ${fmtPts(totalDead)}`, W / 2, H / 2 + 18);
+          });
+          glow('#FF2D78', 8, () => {
+            ctx.font = '13px "Courier New", monospace';
+            ctx.fillStyle = '#FF2D78';
+            ctx.textAlign = 'center';
+            ctx.fillText('PRESS  R  TO PLAY AGAIN', W / 2, H / 2 + 56);
           });
         }
         ctx.textAlign = 'left';
@@ -1071,7 +1124,7 @@
         drawHorizonGlow();
       }
 
-      const pw = 360, ph = 260;
+      const pw = 360, ph = 320;
       const x = W / 2 - pw / 2, y = H / 2 - ph / 2;
 
       ctx.fillStyle = 'rgba(0,0,0,0.85)';
@@ -1087,14 +1140,32 @@
       ctx.fillStyle = '#00FFFF';
       ctx.fillText('SETTINGS', W / 2, y + 34);
 
+      // Section: GAMEPLAY
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(255,200,0,0.6)';
+      ctx.textAlign = 'left';
+      ctx.fillText('GAMEPLAY', x + 24, y + 62);
+
       SETTINGS_OPTS.forEach((opt, i) => {
-        const oy = y + 80 + i * 40;
+        const isVisual = i >= GAMEPLAY_OPTS.length;
+        const sectionOffset = isVisual ? 36 : 0; // gap before visual section
+        const oy = y + 80 + i * 38 + sectionOffset;
+
+        // Section header for VISUAL
+        if (i === GAMEPLAY_OPTS.length) {
+          ctx.font = '10px "Courier New", monospace';
+          ctx.fillStyle = 'rgba(180,180,255,0.5)';
+          ctx.textAlign = 'left';
+          ctx.fillText('VISUAL', x + 24, oy - 18);
+        }
+
         const sel = i === settingsCursor;
         const val = settings[opt.key];
 
+        ctx.font = 'bold 15px "Courier New", monospace';
         if (sel) {
           ctx.fillStyle = 'rgba(0,255,255,0.15)';
-          ctx.fillRect(x + 10, oy - 22, pw - 20, 32);
+          ctx.fillRect(x + 10, oy - 20, pw - 20, 30);
           ctx.fillStyle = '#FFE000';
           ctx.textAlign = 'left';
           ctx.fillText('> ' + opt.label, x + 24, oy);
@@ -1104,7 +1175,7 @@
           ctx.fillText(opt.label, x + 24, oy);
         }
 
-        ctx.font = 'bold 14px "Courier New", monospace';
+        ctx.font = 'bold 13px "Courier New", monospace';
         ctx.textAlign = 'right';
         if (opt.type === 'cycle') {
           ctx.fillStyle = '#00FFFF';
@@ -1113,13 +1184,20 @@
           ctx.fillStyle = val ? '#00FF99' : '#FF2D78';
           ctx.fillText(val ? 'ON' : 'OFF', x + pw - 24, oy);
         }
-        ctx.textAlign = 'center';
-        ctx.font = 'bold 18px "Courier New", monospace';
+
+        // Warning note for enemy respawn
+        if (opt.key === 'enemyRespawn' && val) {
+          ctx.font = '10px "Courier New", monospace';
+          ctx.fillStyle = 'rgba(255,100,100,0.8)';
+          ctx.textAlign = 'right';
+          ctx.fillText('leaderboard disabled', x + pw - 24, oy + 14);
+        }
       });
 
       ctx.font = '11px "Courier New", monospace';
       ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.fillText('↑↓ navigate  ·  ←→ / ENTER cycle  ·  SPACE/ENTER toggle', W / 2, y + ph - 30);
+      ctx.textAlign = 'center';
+      ctx.fillText('↑↓ navigate  ·  ←→ / ENTER cycle  ·  SPACE/ENTER toggle', W / 2, y + ph - 28);
       ctx.fillText('ESC / TAB to return', W / 2, y + ph - 14);
       ctx.textAlign = 'left';
     }
@@ -1132,31 +1210,29 @@
       glow('#00FF99', 30, () => {
         ctx.font = 'bold 42px "Courier New", monospace';
         ctx.fillStyle = '#00FF99';
-        ctx.fillText('LEVEL COMPLETE!', W / 2, H / 2 - 70);
+        ctx.fillText('LEVEL COMPLETE!', W / 2, 90);
       });
       glow('#FF2D78', 10, () => {
         ctx.font = 'bold 16px "Courier New", monospace';
         ctx.fillStyle = '#FF2D78';
-        ctx.fillText(currentLevel.name.toUpperCase(), W / 2, H / 2 - 26);
+        ctx.fillText(currentLevel.name.toUpperCase(), W / 2, 122);
       });
-      glow('#00FFFF', 10, () => {
-        ctx.font = 'bold 16px "Courier New", monospace';
-        ctx.fillStyle = '#00FFFF';
-        ctx.fillText(`SCORE  ${score}`, W / 2, H / 2 + 8);
-      });
+      const bdBot = drawScoreBreakdown(W / 2, 145);
       glow('#FFD700', 10, () => {
         ctx.font = 'bold 16px "Courier New", monospace';
         ctx.fillStyle = '#FFD700';
-        ctx.fillText(`TIME  ${formatTime(finalTime)}`, W / 2, H / 2 + 36);
+        ctx.textAlign = 'center';
+        ctx.fillText(`TIME  ${formatTime(finalTime)}`, W / 2, bdBot + 14);
       });
       const nextLevel = ALL_LEVELS[playingLevelIdx + 1];
       if (nextLevel) {
         glow('#FF2D78', 8, () => {
           ctx.font = '13px "Courier New", monospace';
           ctx.fillStyle = 'rgba(200,200,255,0.7)';
-          ctx.fillText(`NEXT: ${nextLevel.name.toUpperCase()}`, W / 2, H / 2 + 72);
+          ctx.textAlign = 'center';
+          ctx.fillText(`NEXT: ${nextLevel.name.toUpperCase()}`, W / 2, bdBot + 46);
           ctx.fillStyle = '#FF2D78';
-          ctx.fillText('TAP  OR  PRESS  ENTER  TO  CONTINUE', W / 2, H / 2 + 96);
+          ctx.fillText('TAP  OR  PRESS  ENTER  TO  CONTINUE', W / 2, bdBot + 70);
         });
       }
       ctx.textAlign = 'left';

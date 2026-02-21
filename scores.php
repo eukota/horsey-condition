@@ -39,7 +39,7 @@ function connectDb($isLocal) {
     $pdo->exec("CREATE TABLE IF NOT EXISTS leaderboard (
         id       INTEGER PRIMARY KEY AUTOINCREMENT,
         name     TEXT    NOT NULL,
-        score    INTEGER NOT NULL,
+        score    REAL    NOT NULL,
         time     INTEGER NOT NULL,
         finished INTEGER NOT NULL DEFAULT 1,
         settings_key TEXT NOT NULL,
@@ -54,6 +54,11 @@ try {
     http_response_code(500);
     echo json_encode(['error' => 'Database connection failed']);
     exit;
+}
+
+// One-time migration: widen score column to FLOAT for decimal time bonus scores
+if (!$isLocal) {
+    try { $pdo->exec("ALTER TABLE leaderboard MODIFY COLUMN score FLOAT NOT NULL DEFAULT 0"); } catch (Exception $e) { /* already done or not needed */ }
 }
 
 // ── helpers ───────────────────────────────────────────────
@@ -94,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $name     = strtoupper(substr($payload['name'], 0, 16));
-    $score    = (int)$payload['score'];
+    $score    = (float)$payload['score'];
     $time     = (int)$payload['time'];
     $finished = (bool)($payload['finished'] ?? true);
 
