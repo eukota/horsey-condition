@@ -14,7 +14,8 @@ if ($isLocal) {
 function connectDb($isLocal) {
     if (!$isLocal) {
         foreach (['db_config.php', '../db_config.php', '../horsey_db_config.php'] as $f) {
-            if (file_exists($f)) { require_once $f; break; }
+            $absPath = __DIR__ . '/' . $f;
+            if (file_exists($absPath)) { require_once $absPath; break; }
         }
         $host = getenv('DB_HOST') ?: (defined('DB_HOST') ? DB_HOST : null);
         $name = getenv('DB_NAME') ?: (defined('DB_NAME') ? DB_NAME : null);

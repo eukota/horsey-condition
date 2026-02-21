@@ -175,7 +175,7 @@
     const SPEED = 3.0;
     const W = canvas.width, H = canvas.height;
 
-    // ALL_LEVELS, generateLevel loaded from levels.js
+    // ALL_LEVELS loaded from levels.js
     let currentLevel = ALL_LEVELS[0];
 
     // ── level data helpers ────────────────────────────────────
@@ -189,16 +189,20 @@
     }
 
     // ── state ─────────────────────────────────────────────────
-    let player, enemies, cameraX, score, phase, tick;
+    let player, enemies, cameraX, cameraY, score, phase, tick;
     let horseTrail = [];
     const RAINBOW = ['#FF0000', '#FF6600', '#FFFF00', '#00FF44', '#00AAFF', '#8833FF', '#FF44CC'];
-    let currentLevelEncoding = null;
     let username = '';
     let scores = { highScores: [], fastTimes: [] };
     let startTime = null;
     let timerActive = false;
     let finalTime = 0;
     let hasPlayed = false;
+    let playingLevelIdx = 0;
+    let isFullRun = false;
+    let tookSecretPath = false;
+    let runScore = 0;
+    let runTime = 0;
 
     // ── settings ──────────────────────────────────────────────
     const settings = {
@@ -209,7 +213,7 @@
       highQualityFX: true,
     };
     const SETTINGS_OPTS = [
-      { label: 'Level', key: 'levelIdx', type: 'cycle', options: [...ALL_LEVELS.map(l => l.name), 'RANDOM'] },
+      { label: 'Level', key: 'levelIdx', type: 'cycle', options: ALL_LEVELS.map(l => l.name) },
       { label: 'Enemy Respawn', key: 'enemyRespawn', type: 'toggle' },
       { label: 'High Quality FX', key: 'highQualityFX', type: 'toggle' },
       { label: 'Rainbow Trail', key: 'rainbowTrail', type: 'toggle' },
@@ -219,18 +223,23 @@
     let settingsPrevPhase = 'lobby';
 
     function getSettingsKey() {
-      const lvlId = settings.levelIdx < ALL_LEVELS.length ? ALL_LEVELS[settings.levelIdx].id : 'rnd';
-      return `lvl:${lvlId}|er:${settings.enemyRespawn ? 1 : 0}`;
+      return `lvl:${currentLevel.id}|er:${settings.enemyRespawn ? 1 : 0}`;
+    }
+
+    function getRunKey(secret) {
+      return `${secret ? 'run:secret' : 'run:all'}|er:${settings.enemyRespawn ? 1 : 0}`;
     }
 
     // ── server I/O ────────────────────────────────────────────
     async function fetchScores() {
       try {
-        const res = await fetch(`scores.php?key=${encodeURIComponent(getSettingsKey())}`);
+        let key;
+        if (settings.levelIdx === 0) key = getRunKey(false);
+        else if (settings.levelIdx === ALL_LEVELS.length - 1) key = getRunKey(true);
+        else key = `lvl:${ALL_LEVELS[settings.levelIdx].id}|er:${settings.enemyRespawn ? 1 : 0}`;
+        const res = await fetch(`scores.php?key=${encodeURIComponent(key)}`);
         const data = await res.json();
-        if (data && data.highScores && data.fastTimes) {
-          scores = data;
-        }
+        if (data && data.highScores && data.fastTimes) scores = data;
       } catch { /* no server (opened as file) */ }
     }
 
@@ -239,15 +248,20 @@
         const res = await fetch('scores.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: username, score, time: finalTime, finished, settingsKey: getSettingsKey(),
-            ...(currentLevelEncoding ? { encoding: currentLevelEncoding } : {})
-          }),
+          body: JSON.stringify({ name: username, score, time: finalTime, finished, settingsKey: getSettingsKey() }),
         });
         const data = await res.json();
-        if (data && data.highScores && data.fastTimes) {
-          scores = data;
-        }
+        if (data && data.highScores && data.fastTimes) scores = data;
+      } catch { /* offline */ }
+    }
+
+    async function submitRunScore(secret) {
+      try {
+        await fetch('scores.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: username, score: runScore, time: runTime, finished: true, settingsKey: getRunKey(secret) }),
+        });
       } catch { /* offline */ }
     }
 
@@ -277,10 +291,17 @@
 
     // ── init ──────────────────────────────────────────────────
     function initPlay() {
-      currentLevel = settings.levelIdx < ALL_LEVELS.length
-        ? ALL_LEVELS[settings.levelIdx]
-        : generateLevel();
-      currentLevelEncoding = currentLevel.encoding || null;
+      playingLevelIdx = settings.levelIdx;
+      isFullRun = (settings.levelIdx === 0);
+      tookSecretPath = false;
+      runScore = 0;
+      runTime = 0;
+      startLevel(playingLevelIdx);
+      hasPlayed = true;
+    }
+
+    function startLevel(idx) {
+      currentLevel = ALL_LEVELS[idx];
       buildLevelData();
       player = { x: 80, y: 340, w: 20, h: 26, vx: 0, vy: 0, onGround: false, hp: 5, iframes: 0, facing: 1 };
       horseTrail = [];
@@ -293,12 +314,32 @@
         };
       });
       cameraX = 0;
+      cameraY = 0;
       score = 0;
       phase = 'play';
       startTime = null;
       timerActive = false;
       finalTime = 0;
-      hasPlayed = true;
+    }
+
+    function winLevel(secret = false) {
+      finalTime = timerActive ? Date.now() - startTime : 0;
+      score += player.hp * 5;
+      if (isFullRun) { runScore += score; runTime += finalTime; }
+      submitScore(true);
+
+      const isL6 = playingLevelIdx === 5;
+      const isL7 = playingLevelIdx === 6;
+
+      if (secret && isL6) {
+        tookSecretPath = true;
+        phase = 'secretwin';
+      } else if (isL6 || isL7) {
+        if (isFullRun) submitRunScore(tookSecretPath);
+        phase = 'win';
+      } else {
+        phase = 'nextlevel';
+      }
     }
 
     function killPlayer() {
@@ -378,6 +419,14 @@
       }
 
       if (e.code === 'KeyR' && (phase === 'win' || phase === 'dead')) phase = 'lobby';
+      if ((e.code === 'Enter' || e.code === 'KeyR') && phase === 'nextlevel') {
+        playingLevelIdx++;
+        startLevel(playingLevelIdx);
+      }
+      if ((e.code === 'Enter' || e.code === 'KeyR') && phase === 'secretwin') {
+        playingLevelIdx = ALL_LEVELS.length - 1;
+        startLevel(playingLevelIdx);
+      }
     });
 
     window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -628,16 +677,15 @@
 
       // Win / fall
       if (player.x + player.w > GOAL.x && player.y < GOAL.y + GOAL.poleH) {
-        finalTime = timerActive ? Date.now() - startTime : 0;
-        score += player.hp * 5; // Bonus for remaining health
-        phase = 'win';
-        submitScore(true);
+        winLevel(false);
       }
-      if (player.y > H + 80) killPlayer();
+      if (player.y > cameraY + H + 80) killPlayer();
 
       // Camera
       cameraX += (player.x - W * 0.3 - cameraX) * 0.12;
       cameraX = Math.max(0, cameraX);
+      cameraY += (player.y - H * 0.5 - cameraY) * 0.12;
+      cameraY = Math.max(-200, cameraY); // don't scroll above world top
     }
 
     // ── background helpers ────────────────────────────────────
@@ -647,8 +695,9 @@
       ctx.lineWidth = 1;
       const gs = 50;
       const ox = (-cameraX % gs + gs) % gs;
+      const oy = (-cameraY % gs + gs) % gs;
       for (let x = ox; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-      for (let y = 0; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+      for (let y = oy; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
       ctx.restore();
     }
 
@@ -721,9 +770,13 @@
 
       // Leaderboard panels
       const pw = 310, ph = 220, py = 98;
-      drawPanel(W / 2 - pw - 12, py, pw, ph, '#FF2D78', 'HIGH SCORES',
-        scores.highScores, e => `${e.score} (${formatTime(e.time).split(':')[1]})`); // showing just ss.ms for space
-      drawPanel(W / 2 + 12, py, pw, ph, '#00FF99', 'FASTEST TIMES',
+      const isRunBoard = settings.levelIdx === 0;
+      const isSecretBoard = settings.levelIdx === ALL_LEVELS.length - 1;
+      const lbTitle1 = isRunBoard ? 'FULL RUN · SCORES' : isSecretBoard ? 'SECRET RUN · SCORES' : 'HIGH SCORES';
+      const lbTitle2 = isRunBoard ? 'FULL RUN · FASTEST' : isSecretBoard ? 'SECRET RUN · FASTEST' : 'FASTEST TIMES';
+      drawPanel(W / 2 - pw - 12, py, pw, ph, '#FF2D78', lbTitle1,
+        scores.highScores, e => `${e.score} (${formatTime(e.time).split(':')[1]})`);
+      drawPanel(W / 2 + 12, py, pw, ph, '#00FF99', lbTitle2,
         scores.fastTimes, e => `${formatTime(e.time)} (${e.score}pts)`);
 
       // Username input
@@ -771,7 +824,7 @@
       drawHorizonGlow();
 
       ctx.save();
-      ctx.translate(-Math.round(cameraX), 0);
+      ctx.translate(-Math.round(cameraX), -Math.round(cameraY));
 
       // Platforms
       for (const [px, py, pw, ph, col] of currentLevel.platforms) {
@@ -783,22 +836,20 @@
         });
       }
 
-      // Goal flag
-      glow('#FFD700', 24, () => {
-        ctx.strokeStyle = '#FFD700';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(GOAL.x, GOAL.y);
-        ctx.lineTo(GOAL.x, GOAL.y + GOAL.poleH);
-        ctx.stroke();
-        const wave = Math.sin(tick * 0.08) * 4;
-        ctx.fillStyle = '#FFD700';
-        ctx.beginPath();
-        ctx.moveTo(GOAL.x, GOAL.y);
-        ctx.lineTo(GOAL.x + 34 + wave, GOAL.y + 12);
-        ctx.lineTo(GOAL.x, GOAL.y + 34);
-        ctx.fill();
+      // Goal Rainbow
+      ctx.save();
+      ctx.translate(GOAL.x, GOAL.y + GOAL.poleH);
+      RAINBOW.forEach((col, i) => {
+        const r = 45 + (RAINBOW.length - i) * 6;
+        glow(col, 20, () => {
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 7;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, Math.PI, 0);
+          ctx.stroke();
+        });
       });
+      ctx.restore();
 
       // Enemies
       for (const e of enemies) {
@@ -969,11 +1020,17 @@
         ctx.textAlign = 'left';
       });
 
-      if (timerActive && phase === 'play') {
+      if (phase === 'play') {
         glow('#FFD700', 8, () => {
+          ctx.font = 'bold 11px "Courier New", monospace';
           ctx.fillStyle = '#FFD700';
           ctx.textAlign = 'center';
-          ctx.fillText(formatTime(Date.now() - startTime), W / 2, 30);
+          ctx.fillText(currentLevel.name.toUpperCase(), W / 2, 14);
+
+          if (timerActive) {
+            ctx.font = 'bold 15px "Courier New", monospace';
+            ctx.fillText(formatTime(Date.now() - startTime), W / 2, 32);
+          }
           ctx.textAlign = 'left';
         });
       }
@@ -1094,10 +1151,77 @@
       ctx.textAlign = 'left';
     }
 
+    // ── next level screen ─────────────────────────────────────
+    function renderNextLevel() {
+      ctx.fillStyle = 'rgba(0,0,0,0.88)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      glow('#00FF99', 30, () => {
+        ctx.font = 'bold 42px "Courier New", monospace';
+        ctx.fillStyle = '#00FF99';
+        ctx.fillText('LEVEL COMPLETE!', W / 2, H / 2 - 70);
+      });
+      glow('#FF2D78', 10, () => {
+        ctx.font = 'bold 16px "Courier New", monospace';
+        ctx.fillStyle = '#FF2D78';
+        ctx.fillText(currentLevel.name.toUpperCase(), W / 2, H / 2 - 26);
+      });
+      glow('#00FFFF', 10, () => {
+        ctx.font = 'bold 16px "Courier New", monospace';
+        ctx.fillStyle = '#00FFFF';
+        ctx.fillText(`SCORE  ${score}`, W / 2, H / 2 + 8);
+      });
+      glow('#FFD700', 10, () => {
+        ctx.font = 'bold 16px "Courier New", monospace';
+        ctx.fillStyle = '#FFD700';
+        ctx.fillText(`TIME  ${formatTime(finalTime)}`, W / 2, H / 2 + 36);
+      });
+      const nextLevel = ALL_LEVELS[playingLevelIdx + 1];
+      if (nextLevel) {
+        glow('#FF2D78', 8, () => {
+          ctx.font = '13px "Courier New", monospace';
+          ctx.fillStyle = 'rgba(200,200,255,0.7)';
+          ctx.fillText(`NEXT: ${nextLevel.name.toUpperCase()}`, W / 2, H / 2 + 72);
+          ctx.fillStyle = '#FF2D78';
+          ctx.fillText('PRESS  ENTER  TO CONTINUE', W / 2, H / 2 + 96);
+        });
+      }
+      ctx.textAlign = 'left';
+    }
+
+    // ── secret win screen ─────────────────────────────────────
+    function renderSecretWin() {
+      ctx.fillStyle = 'rgba(0,5,0,0.92)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      glow('#00FF99', 60, () => {
+        ctx.font = 'bold 34px "Courier New", monospace';
+        ctx.fillStyle = tick % 40 < 20 ? '#00FF99' : '#00CC77';
+        ctx.fillText('!! SECRET EXIT FOUND !!', W / 2, H / 2 - 50);
+      });
+      glow('#FFD700', 20, () => {
+        ctx.font = 'bold 20px "Courier New", monospace';
+        ctx.fillStyle = '#FFD700';
+        ctx.fillText('THE SECRET WORLD AWAITS...', W / 2, H / 2 + 4);
+      });
+      glow('#FF2D78', 8, () => {
+        ctx.font = '13px "Courier New", monospace';
+        ctx.fillStyle = '#FF2D78';
+        ctx.fillText('PRESS  ENTER  TO CONTINUE', W / 2, H / 2 + 52);
+      });
+      ctx.textAlign = 'left';
+    }
+
     // ── loop ──────────────────────────────────────────────────
     function loop() {
       if (phase === 'settings') {
         renderSettings();
+      } else if (phase === 'nextlevel') {
+        tick++;
+        renderNextLevel();
+      } else if (phase === 'secretwin') {
+        tick++;
+        renderSecretWin();
       } else {
         update();
         render();
