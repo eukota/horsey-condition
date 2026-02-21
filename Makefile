@@ -7,16 +7,16 @@ build:
 	docker build -t $(IMAGE) .
 
 run:
-	@test -f scores.json || echo '{"highScores":[],"fastTimes":[]}' > scores.json
+	@touch scores.db
 	docker run --rm -p $(PORT):2000 \
-		-v $(PWD)/scores.json:/app/scores.json \
+		-v $(PWD)/scores.db:/app/scores.db \
 		$(IMAGE)
 
 dev: build
-	@test -f scores.json || echo '{"highScores":[],"fastTimes":[]}' > scores.json
+	@touch scores.db
 	docker run --rm -p $(PORT):2000 \
 		-v $(PWD)/index.html:/app/index.html \
 		-v $(PWD)/levels.js:/app/levels.js \
-		-v $(PWD)/server.js:/app/server.js \
-		-v $(PWD)/scores.json:/app/scores.json \
-		$(IMAGE) node --watch server.js
+		-v $(PWD)/scores.php:/app/scores.php \
+		-v $(PWD)/scores.db:/app/scores.db \
+		$(IMAGE)

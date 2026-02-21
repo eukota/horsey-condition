@@ -227,7 +227,10 @@
     async function fetchScores() {
       try {
         const res = await fetch(`scores.php?key=${encodeURIComponent(getSettingsKey())}`);
-        scores = await res.json();
+        const data = await res.json();
+        if (data && data.highScores && data.fastTimes) {
+          scores = data;
+        }
       } catch { /* no server (opened as file) */ }
     }
 
@@ -241,7 +244,10 @@
             ...(currentLevelEncoding ? { encoding: currentLevelEncoding } : {})
           }),
         });
-        scores = await res.json();
+        const data = await res.json();
+        if (data && data.highScores && data.fastTimes) {
+          scores = data;
+        }
       } catch { /* offline */ }
     }
 
