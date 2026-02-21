@@ -4,6 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <title>HORSEY CONDITION</title>
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <style>
     * {
       margin: 0;
@@ -22,13 +24,145 @@
 
     canvas {
       display: block;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      max-width: 100vw;
+      max-height: 100vh;
+      object-fit: contain;
+    }
+
+    /* Virtual Controls */
+    #controls {
+      position: fixed;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      display: none;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding: 0 40px 20px 40px;
+      pointer-events: none;
+      z-index: 100;
+      user-select: none;
+    }
+
+    .joy-area {
+      width: 140px;
+      height: 100px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px dashed rgba(0, 255, 255, 0.2);
+      border-radius: 10px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+    }
+
+    .joy-knob {
+      width: 50px;
+      height: 50px;
+      background: rgba(0, 255, 255, 0.2);
+      border: 2px solid #00FFFF;
+      border-radius: 50%;
+      pointer-events: none;
+      transition: transform 0.1s ease-out;
+    }
+
+    .btn-jump {
+      width: 80px;
+      height: 80px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 3px solid #FF2D78;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FF2D78;
+      font-size: 32px;
+      font-weight: bold;
+      pointer-events: auto;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .btn-jump:active {
+      background: rgba(255, 45, 120, 0.3);
+      transform: scale(0.9);
+    }
+
+    #btn-start,
+    #btn-restart {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 160px;
+      height: 60px;
+      background: #00FFFF;
+      color: #05000F;
+      border: none;
+      border-radius: 30px;
+      font-family: "Courier New", monospace;
+      font-size: 20px;
+      font-weight: bold;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 101;
+      box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+      pointer-events: auto;
+      user-select: none;
+    }
+
+    #btn-restart {
+      background: #FF2D78;
+      box-shadow: 0 0 20px rgba(255, 45, 120, 0.5);
+      color: #FFF;
+    }
+
+    #btn-settings {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      width: 50px;
+      height: 50px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 2px solid rgba(0, 255, 255, 0.5);
+      border-radius: 10px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 101;
+      pointer-events: auto;
+      color: #00FFFF;
+      font-size: 24px;
+      user-select: none;
+    }
+
+    /* Hidden input for mobile keyboard */
+    #mobile-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+      z-index: -1;
     }
   </style>
 </head>
 
 <body>
   <canvas id="c"></canvas>
-  <script src="/levels.js"></script>
+  <input type="text" id="mobile-input" maxlength="16" autocorrect="off" autocapitalize="characters">
+  <div id="btn-start">START GAME</div>
+  <div id="btn-restart">RESTART</div>
+  <div id="btn-settings">⚙</div>
+  <div id="controls">
+    <div id="joy-base" class="joy-area">
+      <div id="joy-knob" class="joy-knob"></div>
+    </div>
+    <div id="btn-jump" class="btn-jump">↑</div>
+  </div>
+  <script src="./levels.js"></script>
   <script>
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
@@ -72,10 +206,12 @@
       levelIdx: 0,
       rainbowTrail: true,
       unicornHorn: true,
+      highQualityFX: true,
     };
     const SETTINGS_OPTS = [
       { label: 'Level', key: 'levelIdx', type: 'cycle', options: [...ALL_LEVELS.map(l => l.name), 'RANDOM'] },
       { label: 'Enemy Respawn', key: 'enemyRespawn', type: 'toggle' },
+      { label: 'High Quality FX', key: 'highQualityFX', type: 'toggle' },
       { label: 'Rainbow Trail', key: 'rainbowTrail', type: 'toggle' },
       { label: 'Unicorn Horn', key: 'unicornHorn', type: 'toggle' },
     ];
@@ -90,14 +226,14 @@
     // ── server I/O ────────────────────────────────────────────
     async function fetchScores() {
       try {
-        const res = await fetch(`/scores?key=${getSettingsKey()}`);
+        const res = await fetch(`scores?key=${getSettingsKey()}`);
         scores = await res.json();
       } catch { /* no server (opened as file) */ }
     }
 
     async function submitScore(finished = true) {
       try {
-        const res = await fetch('/scores', {
+        const res = await fetch('scores', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -122,6 +258,10 @@
     }
 
     function glow(color, blur, fn) {
+      if (!settings.highQualityFX) {
+        fn();
+        return;
+      }
       ctx.save();
       ctx.shadowColor = color;
       ctx.shadowBlur = blur;
@@ -235,6 +375,174 @@
     });
 
     window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    // ── touch events ──────────────────────────────────────────
+    const activeTouches = {};
+    function setupTouch() {
+      const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+      if (!isTouch) return;
+
+      const joyBase = document.getElementById('joy-base');
+      const joyKnob = document.getElementById('joy-knob');
+      const btnJump = document.getElementById('btn-jump');
+      const btnStart = document.getElementById('btn-start');
+      const btnRestart = document.getElementById('btn-restart');
+      const btnSettings = document.getElementById('btn-settings');
+      const controls = document.getElementById('controls');
+      const mobileInput = document.getElementById('mobile-input');
+
+      // Visibility logic
+      const updateVisibility = () => {
+        const isLobby = phase === 'lobby';
+        const isPlay = phase === 'play';
+        const isEnd = phase === 'win' || phase === 'dead';
+        const isSettings = phase === 'settings';
+
+        btnStart.style.display = (isLobby && username.trim().length > 0) ? 'flex' : 'none';
+        btnRestart.style.display = isEnd ? 'flex' : 'none';
+        btnSettings.style.display = (isLobby || isPlay || isSettings) ? 'flex' : 'none';
+        controls.style.display = (isPlay && !isEnd) ? 'flex' : 'none';
+      };
+
+      // Hook into game loop/phase changes
+      const _loop = loop;
+      loop = () => {
+        updateVisibility();
+        _loop();
+      };
+
+      // Mobile keyboard / Settings touch handling
+      canvas.addEventListener('touchstart', e => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = 800 / rect.width;
+        const scaleY = 450 / rect.height;
+        const cx = (e.touches[0].clientX - rect.left) * scaleX;
+        const cy = (e.touches[0].clientY - rect.top) * scaleY;
+
+        if (phase === 'lobby') {
+          if (cy > 330 && cy < 390) {
+            mobileInput.focus();
+            mobileInput.value = username;
+          }
+        } else if (phase === 'settings') {
+          const menuW = 360, menuH = 260;
+          const menuX = 400 - menuW / 2, menuY = 225 - menuH / 2;
+
+          if (cx > menuX && cx < menuX + menuW) {
+            SETTINGS_OPTS.forEach((opt, i) => {
+              const oy = menuY + 80 + i * 40;
+              if (cy > oy - 25 && cy < oy + 10) {
+                settingsCursor = i;
+                if (opt.type === 'cycle') {
+                  settings[opt.key] = (settings[opt.key] + 1) % opt.options.length;
+                } else {
+                  settings[opt.key] = !settings[opt.key];
+                  if (opt.key === 'rainbowTrail') horseTrail = [];
+                }
+              }
+            });
+          }
+        }
+      });
+      mobileInput.addEventListener('input', () => {
+        username = mobileInput.value.toUpperCase();
+      });
+      mobileInput.addEventListener('blur', () => {
+        mobileInput.value = username;
+      });
+
+      btnStart.addEventListener('touchstart', e => {
+        e.preventDefault();
+        if (username.trim().length > 0) initPlay();
+      });
+
+      btnRestart.addEventListener('touchstart', e => {
+        e.preventDefault();
+        phase = 'lobby';
+      });
+
+      btnSettings.addEventListener('touchstart', e => {
+        e.preventDefault();
+        if (phase === 'settings') {
+          phase = settingsPrevPhase;
+          if (phase === 'lobby') fetchScores();
+        } else {
+          settingsPrevPhase = phase;
+          phase = 'settings';
+        }
+      });
+
+      const updateJoystick = (touch) => {
+        const rect = joyBase.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const dx = touch.clientX - centerX;
+        const maxDist = rect.width / 2 - 25;
+        const normX = Math.max(-1, Math.min(1, dx / maxDist));
+
+        joyKnob.style.transform = `translateX(${normX * maxDist}px)`;
+
+        if (normX < -0.3) { keys['ArrowLeft'] = true; keys['ArrowRight'] = false; }
+        else if (normX > 0.3) { keys['ArrowRight'] = true; keys['ArrowLeft'] = false; }
+        else { keys['ArrowLeft'] = false; keys['ArrowRight'] = false; }
+
+        if (!timerActive && phase === 'play' && Math.abs(normX) > 0.3) {
+          startTime = Date.now();
+          timerActive = true;
+        }
+      };
+
+      joyBase.addEventListener('touchstart', e => {
+        e.preventDefault();
+        for (let t of e.changedTouches) {
+          activeTouches[t.identifier] = 'joy';
+          updateJoystick(t);
+        }
+      }, { passive: false });
+
+      joyBase.addEventListener('touchmove', e => {
+        e.preventDefault();
+        for (let t of e.changedTouches) {
+          if (activeTouches[t.identifier] === 'joy') updateJoystick(t);
+        }
+      }, { passive: false });
+
+      const stopJoy = e => {
+        e.preventDefault();
+        for (let t of e.changedTouches) {
+          if (activeTouches[t.identifier] === 'joy') {
+            joyKnob.style.transform = `translateX(0)`;
+            keys['ArrowLeft'] = false;
+            keys['ArrowRight'] = false;
+            delete activeTouches[t.identifier];
+          }
+        }
+      };
+      joyBase.addEventListener('touchend', stopJoy, { passive: false });
+      joyBase.addEventListener('touchcancel', stopJoy, { passive: false });
+
+      btnJump.addEventListener('touchstart', e => {
+        e.preventDefault();
+        for (let t of e.changedTouches) activeTouches[t.identifier] = 'jump';
+        keys['Space'] = true;
+        if (!timerActive && phase === 'play') {
+          startTime = Date.now();
+          timerActive = true;
+        }
+      }, { passive: false });
+
+      const stopJump = e => {
+        e.preventDefault();
+        for (let t of e.changedTouches) {
+          if (activeTouches[t.identifier] === 'jump') {
+            keys['Space'] = false;
+            delete activeTouches[t.identifier];
+          }
+        }
+      };
+      btnJump.addEventListener('touchend', stopJump, { passive: false });
+      btnJump.addEventListener('touchcancel', stopJump, { passive: false });
+    }
+    setupTouch();
 
     // ── update ────────────────────────────────────────────────
     function update() {

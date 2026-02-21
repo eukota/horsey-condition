@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SCORES_FILE = path.join(__dirname, 'scores.json');
-const HTML_FILE = path.join(__dirname, 'platformer.html');
+const HTML_FILE = path.join(__dirname, 'index.html');
 const LEVELS_FILE = path.join(__dirname, 'levels.js');
 
 function readScores() {

@@ -15,7 +15,7 @@ run:
 dev: build
 	@test -f scores.json || echo '{"highScores":[],"fastTimes":[]}' > scores.json
 	docker run --rm -p $(PORT):2000 \
-		-v $(PWD)/platformer.html:/app/platformer.html \
+		-v $(PWD)/index.html:/app/index.html \
 		-v $(PWD)/levels.js:/app/levels.js \
 		-v $(PWD)/server.js:/app/server.js \
 		-v $(PWD)/scores.json:/app/scores.json \
