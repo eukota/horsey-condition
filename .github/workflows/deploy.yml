@@ -25,8 +25,8 @@ jobs:
         username: ${{ secrets.FTP_USERNAME }}
         server: ${{ secrets.FTP_SERVER }}
         password: ${{ secrets.FTP_PASSWORD }}
-        local_path: './deploy'
-        remote_path: 'horsey/' # TARGET DIRECTORY ON DREAMHOST
+        local_path: './deploy/*'
+        remote_path: 'eukota.com/horsey/' # TARGET DIRECTORY ON DREAMHOST
         # Note: Depending on your server setup, you might need the full path
         # like: /home/your_user/your_domain.com/horsey/
         args: '-o ConnectTimeout=10'
