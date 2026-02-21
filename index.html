@@ -679,7 +679,7 @@
       if (player.x + player.w > GOAL.x && player.y < GOAL.y + GOAL.poleH) {
         winLevel(false);
       }
-      if (player.y > cameraY + H + 80) killPlayer();
+      if (player.y > 600) killPlayer();
 
       // Camera
       cameraX += (player.x - W * 0.3 - cameraX) * 0.12;
